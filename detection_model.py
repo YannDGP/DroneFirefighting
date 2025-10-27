@@ -47,7 +47,7 @@ class ObjectDetector:
             'extra': 'yolo11x'
         }
         
-        model_name = r"/home/yanndg/Documents/Programmation/Stage_Saxion/Fire-Detection-and-Ranging-for-Autonomous-Firefighting-Drones-main/best.pt" #model_map.get(model_size.lower(), model_map['small'])
+        model_name = r"/home/yanndg/Documents/Programmation/Stage_Saxion/DroneFirefighting/best.pt" #model_map.get(model_size.lower(), model_map['small'])
         # Define fixed per-class confidence thresholds here
         self.class_conf_thresholds = {
             'human': 0.5,
