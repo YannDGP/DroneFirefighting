@@ -44,6 +44,7 @@ def depth_worker(depth_estimator, frame_source, output_dict, lock, stop_flag):
             depth_map = depth_estimator.estimate_depth(small_frame)
             depth_colored = depth_estimator.colorize_depth(depth_map)
             with lock:
+                output_dict["depth_raw"] = depth_map
                 output_dict["depth"] = depth_colored
         time.sleep(0.001)
 
@@ -64,7 +65,7 @@ def main(camera_index=0):
     depth_estimator = DepthEstimator(model_size='base', device=device, backend='depth-anything')
 
     cv2.namedWindow("Detection + Depth", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("Detection + Depth", 960, 540)
+    cv2.resizeWindow("Detection + Depth", 600, 360)
 
     shared_data = {}
     frame_source = {}
@@ -98,8 +99,27 @@ def main(camera_index=0):
                 frame_source["latest_frame"] = frame.copy()
                 detection_frame = shared_data.get("detect", cv2.resize(frame.copy(), (640, 360)))
                 depth_colored = shared_data.get("depth", None)
+                depth_raw = shared_data.get("depth_raw", None)
 
             display_frame = cv2.resize(detection_frame, (frame.shape[1], frame.shape[0]))
+            
+            if depth_raw is not None:
+                boxes = detector.get_last_boxes()
+                if boxes :
+                    detect_h, detect_w = detection_frame.shape[:2]
+                    depth_h, depth_w = depth_raw.shape[:2]
+                    scale_x = depth_w / detect_w
+                    scale_y = depth_h / detect_h       
+                    
+                    for box in boxes:
+                        x1,y1,x2,y2= box
+                        scale_box = [x1 * scale_x, y1 * scale_y, x2 * scale_x, y2 * scale_y]
+                        distance = depth_estimator.get_depth_in_region(depth_raw, scaled_box, method='median')
+
+                        x1_disp, y1_disp = int(x1), int(y1)
+                        cv2.putText(display_frame, f"{distance:.2f} m", (x1_disp, y1_disp - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0),2)
+
             if depth_colored is not None:
                 small_depth = cv2.resize(depth_colored, (frame.shape[1] // 4, frame.shape[0] // 4))
                 h, w, _ = small_depth.shape

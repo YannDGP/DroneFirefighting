@@ -9,7 +9,7 @@ class ObjectDetector:
     """
     Object detection using YOLOv11 from Ultralytics
     """
-    def __init__(self, model_size='small', conf_thres=0.5, iou_thres=0.45, classes=None, device=None):
+    def __init__(self, model_size='small', conf_thres=0.5, iou_thres=0.45, classes=None, device=None, depth_estimator=None):
         """
         Initialize the object detector
         
@@ -30,6 +30,7 @@ class ObjectDetector:
                 device = 'cpu'
         
         self.device = device
+        self.depth_estimator =  depth_estimator
         
         # Set MPS fallback for operations not supported on Apple Silicon
         if self.device == 'mps':
@@ -47,10 +48,10 @@ class ObjectDetector:
             'extra': 'yolo11x'
         }
         
-        model_name = '/home/yanndg/Documents/Programmation/Stage_Saxion/DroneFirefighting/best.pt' #model_map.get(model_size.lower(), model_map['small'])
+        model_name = r"/home/yanndg/Documents/Programmation/Stage_Saxion/DroneFirefighting/best.pt" #model_map.get(model_size.lower(), model_map['small'])
         # Define fixed per-class confidence thresholds here
         self.class_conf_thresholds = {
-            'human': 0.5,
+            'human': 0.2,
             'fire': 0.1,
             'smoke': 0.1
         }
@@ -76,7 +77,7 @@ class ObjectDetector:
         # Initialize tracking trajectories
         self.tracking_trajectories = {}
     
-    def detect(self, image, track=True):
+    def detect(self, image,depth_map=None, track=True):
         """
         Detect objects in an image
         
@@ -149,25 +150,33 @@ class ObjectDetector:
                 # Process boxes
                 for bbox in predictions.boxes:
                     # Extract information
-                    scores = bbox.conf
-                    classes = bbox.cls
-                    bbox_coords = bbox.xyxy
+                    score = float(bbox.conf.item())
+                    class_id = float(bbox.cls.item())
+                    bbox_coords = bbox.xyxy[0].cpu().numpy()
+                    id_ = int(bbox.id.item()) if hasattr(bbox, 'id') and bbox.id is not None else None
                     
-                    # Check if tracking IDs are available
-                    if hasattr(bbox, 'id') and bbox.id is not None:
-                        ids = bbox.id
-                    else:
-                        ids = [None] * len(scores)
+                    xmin, ymin, xmax, ymax = bbox_coords
+                    class_name = predictions.names[class_id]
+                    threshold = self.class_conf_thresholds.get(class_name, self.model.overrides['conf'])
+
+                    if score < threshold:
+                        print(f"[DEBUG] {class_name} rejeté (score={score:.2f} < seuil={threshold:.2f})")
+                        continue
+                    # # Check if tracking IDs are available
+                    # if hasattr(bbox, 'id') and bbox.id is not None:
+                    #     ids = bbox.id
+                    # else:
+                    #     ids = [None] * len(scores)
                     
                     # Process each detection
-                    for score, class_id, bbox_coord, id_ in zip(scores, classes, bbox_coords, ids):
-                        class_name = predictions.names[int(class_id)]
-                        threshold = self.class_conf_thresholds.get(class_name, self.model.overrides['conf'])
+                    # for score, class_id, bbox_coord, id_ in zip(scores, classes, bbox_coords, ids):
+                    #     class_name = predictions.names[int(class_id)]
+                    #     threshold = self.class_conf_thresholds.get(class_name, self.model.overrides['conf'])
                         
-                        if float(score) < threshold:
-                            continue
+                    #     if float(score) < threshold:
+                    #         continue
 
-                        xmin, ymin, xmax, ymax = bbox_coord.cpu().numpy()
+                    #     xmin, ymin, xmax, ymax = bbox_coord.cpu().numpy()
                         
                         # Add to detections list
                         detections.append([
@@ -183,14 +192,36 @@ class ObjectDetector:
                                      (int(xmax), int(ymax)), 
                                      (0, 0, 225), 2)
                         
+                        print(f"[DEBUG] depth_map: {depth_map is not None}, depth_estimator: {self.depth_estimator is not None}")
+
+                        if depth_map is not None and self.depth_estimator is not None:
+                            detect_h, detect_w = image.shape[:2]
+                            depth_h, depth_w = depth_map.shape[:2]
+                            scale_x = depth_w / detect_w
+                            scale_y = depth_h / detect_h
+                            scaled_box = [xmin * scale_x, ymin * scale_y, xmax * scale_x, ymax * scale_y]
+                            distance = self.depth_estimator.get_depth_in_region(depth_map, scaled_box, method='median')   
+                            print(f"[DEBUG] scaled_box = {scaled_box}")
+                            print(f"[DEBUG] distance brute = {distance}")  
+                        else : distance = None         
+
+                        # Affichage debug
+                        if distance is not None:
+                            print (f"[DEBUG] {class_name} à {distance:.2f} m")
+                        
                         # Add label
-                        label = f"ID: {int(id_) if id_ is not None else 'N/A'} {predictions.names[int(class_id)]} {float(score):.2f}"
+                        if distance is not None:
+                            label = f"ID: {int(id_) if id_ is not None else 'N/A'} {predictions.names[int(class_id)]} {float(score):.2f} - {distance:.2f} m"
+                        else :
+                            label = f"ID: {int(id_) if id_ is not None else 'N/A'} {predictions.names[int(class_id)]} {float(score):.2f}"
+                        
                         text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
                         dim, baseline = text_size[0], text_size[1]
                         cv2.rectangle(annotated_image, 
                                      (int(xmin), int(ymin)), 
                                      (int(xmin) + dim[0], int(ymin) - dim[1] - baseline), 
                                      (30, 30, 30), cv2.FILLED)
+
                         cv2.putText(annotated_image, label, 
                                    (int(xmin), int(ymin) - 7), 
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)

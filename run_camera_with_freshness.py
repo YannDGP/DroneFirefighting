@@ -39,7 +39,7 @@ def detection_worker(detector, frame_source, output_dict, lock, stop_flag):
         
         if frame is not None:
             # Traitement (lourd, hors du lock)
-            small_frame = cv2.resize(frame, (1600, 900))
+            small_frame = cv2.resize(frame, (640, 360))
             detection_frame, _, _ = detector.detect(small_frame, track=False)
             
             # Publication du résultat (sous lock)
