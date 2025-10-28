@@ -86,10 +86,10 @@ def depth_worker(depth_estimator, frame_source, output_dict, lock, stop_flag):
         time.sleep(0.001)
         #pass
 
-def main(camera_index=0):
-    cap = cv2.VideoCapture(camera_index)
+def main(source=0):
+    cap = cv2.VideoCapture(source)
     if not cap.isOpened():
-        print("Erreur : impossible d'ouvrir la caméra.")
+        print("Erreur : impossible d'ouvrir la source ({source}).")
         return
 
     
@@ -98,9 +98,11 @@ def main(camera_index=0):
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720) 
 
     video_fps = cap.get(cv2.CAP_PROP_FPS)
-    if video_fps <= 0:
+    if video_fps <= 0 or isinstance(source, int):
         video_fps = 30
     
+    target_wait_ms = int(1000 /video_fps)
+
     # Initialisation des modèles
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     depth_estimator = DepthEstimator(model_size='small', device=device, backend='depth-anything') # Utilisez 'small' si trop lent
@@ -129,6 +131,7 @@ def main(camera_index=0):
 
     try:
         while not stop_flag["stop"]:
+            start_time = time.time()
             ret, frame = cap.read()
             
             
@@ -198,6 +201,15 @@ def main(camera_index=0):
 
             cv2.imshow(window_name, display_frame)
 
+            elapsed_time_ms = (time.time() - start_time) * 1000
+            delay_ms = int(target_wait_ms - elapsed_time_ms)
+            
+            if delay_ms < 1: delay_ms = 1
+
+            key = cv2.waitKey(delay_ms) & 0xFF
+            if key in [27, ord('q')]:
+                break
+
     finally:
         # Fermeture propre
         stop_flag["stop"] = True
@@ -208,4 +220,5 @@ def main(camera_index=0):
         print("[INFO] Fermeture complète effectuée.")
 
 if __name__ == "__main__":
-    main (camera_index=0)
+    #main (camera_index=0)
+    main (source='/home/yanndg/Documents/Programmation/Stage_Saxion/test_video/input.mp4')

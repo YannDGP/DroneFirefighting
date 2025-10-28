@@ -48,7 +48,10 @@ class ObjectDetector:
             'extra': 'yolo11x'
         }
 
-        
+        #calibration de la caméra
+        self.FOCAL_PIXELS = 500.0
+        self.REF_OBJECT_HEIGHT_M = 1.7
+        self.REF_CLASS_ID = 0
         
         model_name = '/home/yanndg/Documents/Programmation/Stage_Saxion/DroneFirefighting/best.pt' #model_map.get(model_size.lower(), model_map['small'])
         # Define fixed per-class confidence thresholds here
@@ -172,10 +175,15 @@ class ObjectDetector:
 
                         xmin, ymin, xmax, ymax = bbox_coord.cpu().numpy()
                         
-                        # -- Ajout : estimation de la pronfondeur ---
                         distance = None
-                        if depth_map is not None and self.depth_estimator is not None :
-                            distance = self.depth_estimator.get_depth_in_region(depth_map, [xmin, ymin, xmax, ymax], method='median')
+                        if int(class_id) == self.REF_CLASS_ID and ymax > ymin:
+                            bbox_height_pix = ymax - ymin
+                            #distance = (Taille réélle * focale)/taille en pixel
+                            distance_pinhole = (self.REF_OBJECT_HEIGHT_M * self.FOCAL_PIXELS) / bbox_height_pix
+                            distance = distance_pinhole
+
+                        elif depth_map is not None and self.depth_estimator is not None :
+                            distance = self.depth_estimator.get_depth_in_region(depth_map, [xmin, ymin, xmax, ymax], method='p5')
 
                         # Add to detections list
                         detections.append([
@@ -252,8 +260,14 @@ class ObjectDetector:
                         
                         # -- Ajout : estimation de la pronfondeur ---
                         distance = None
-                        if depth_map is not None and self.depth_estimator is not None :
-                            distance = self.depth_estimator.get_depth_in_region(depth_map, [xmin, ymin, xmax, ymax], method='median')
+                        if int(class_id) == self.REF_CLASS_ID and ymax > ymin:
+                            bbox_height_pix = ymax - ymin
+                            #distance = (Taille réélle * focale)/taille en pixel
+                            distance_pinhole = (self.REF_OBJECT_HEIGHT_M * self.FOCAL_PIXELS) / bbox_height_pix
+                            distance = distance_pinhole
+
+                        elif depth_map is not None and self.depth_estimator is not None :
+                            distance = self.depth_estimator.get_depth_in_region(depth_map, [xmin, ymin, xmax, ymax], method='p5')
 
                         # Add to detections list
                         detections.append([

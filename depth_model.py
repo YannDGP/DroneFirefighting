@@ -26,7 +26,8 @@ class DepthEstimator:
 
         # --- SUPPRESSION DE LA STABILISATION EMA ---
         self.scale_factor_ema = None 
-        self.ema_alpha = 0.0 # Rendu inutile, mais laissé à 0.0 pour clarté
+        self.ema_alpha = 0.25 # Rendu inutile, mais laissé à 0.0 pour clarté
+        self.current_scale_factor = 1.0
         # ---------------------------------------
         
         if device is None:
@@ -109,12 +110,16 @@ class DepthEstimator:
                 # 3. Calcul du facteur de mise à l'échelle (non lissé)
                 if depth_ref > 0:
                     scale_factor = REAL_REF_DISTANCE / depth_ref
-                    
-                    # 4. PAS DE STABILISATION. Le facteur de mise à l'échelle est la valeur brute immédiate.
-                    
-                    # 5. Appliquer la mise à l'échelle métrique avec le facteur immédiat
-                    depth_metric = depth_relative * scale_factor
-                    return depth_metric
+                else : scale_factor = self.current_scale_factor
+
+                if self.ema_alpha > 0.0:
+                    if self.current_scale_factor == 1.0:
+                        self.current_scale_factor = scale_factor
+                    else : self.current_scale_factor = self.ema_alpha * scale_factor + (1 - self.ema_alpha) * self.current_scale_factor
+                
+                depth_map_meter = depth_relative * scale_factor
+
+                return depth_map_meter
             
             # --- ÉTAPE DE MISE À L'ÉCHELLE HEURISTIQUE (Fin) ---
             
