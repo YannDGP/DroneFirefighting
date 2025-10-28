@@ -30,18 +30,21 @@ def detection_worker(detector, frame_source, output_dict, lock, stop_flag):
     while not stop_flag["stop"]:
         frame = None
         current_id = -1
+        current_depth_map = None
         
         # Acquisition : Copier UNIQUEMENT si la frame est plus récente que la dernière traitée
         with lock:
             if "latest_frame" in frame_source and frame_source["frame_id"] > last_processed_id:
                 frame = frame_source["latest_frame"].copy()
                 current_id = frame_source["frame_id"]
+
+            # Récupérer la carte de profondeur la plus fraîche (pas de vérification d'ID ici, on prend la dernière)
+            current_depth_map = output_dict.get("raw_depth_map",None)
         
         if frame is not None:
             # Traitement (lourd, hors du lock)
             small_frame = cv2.resize(frame, (640, 360))
-            detection_frame, _, _ = detector.detect(small_frame, track=False)
-            
+            detection_frame, _, _ = detector.detect(small_frame, track=False,depth_map = current_depth_map)  
             # Publication du résultat (sous lock)
             with lock:
                 output_dict["detect"] = detection_frame
@@ -75,6 +78,7 @@ def depth_worker(depth_estimator, frame_source, output_dict, lock, stop_flag):
             with lock:
                 output_dict["depth"] = depth_colored
                 output_dict["depth_id"] = current_id
+                output_dict["raw_depth_map"] =  depth_map
             
             # Mise à jour de l'ID traitée UNIQUEMENT après publication réussie
             last_processed_id = current_id 
@@ -99,9 +103,9 @@ def main(camera_index=0):
     
     # Initialisation des modèles
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    detector = ObjectDetector(model_size="small", conf_thres=0.1, iou_thres=0.45, device=device)
     depth_estimator = DepthEstimator(model_size='small', device=device, backend='depth-anything') # Utilisez 'small' si trop lent
-
+    detector = ObjectDetector(model_size="small", conf_thres=0.1, iou_thres=0.45, device=device, depth_estimator = depth_estimator )
+   
     # Initialisation des variables partagées et gestion des threads
     window_name = "Detection + Depth"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)

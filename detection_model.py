@@ -9,7 +9,7 @@ class ObjectDetector:
     """
     Object detection using YOLOv11 from Ultralytics
     """
-    def __init__(self, model_size='small', conf_thres=0.5, iou_thres=0.45, classes=None, device=None):
+    def __init__(self, model_size='small', conf_thres=0.5, iou_thres=0.45, classes=None, device=None, depth_estimator=None):
         """
         Initialize the object detector
         
@@ -30,6 +30,7 @@ class ObjectDetector:
                 device = 'cpu'
         
         self.device = device
+        self.depth_estimator = depth_estimator
         
         # Set MPS fallback for operations not supported on Apple Silicon
         if self.device == 'mps':
@@ -46,6 +47,8 @@ class ObjectDetector:
             'large': 'yolo11l',
             'extra': 'yolo11x'
         }
+
+        
         
         model_name = '/home/yanndg/Documents/Programmation/Stage_Saxion/DroneFirefighting/best.pt' #model_map.get(model_size.lower(), model_map['small'])
         # Define fixed per-class confidence thresholds here
@@ -76,7 +79,7 @@ class ObjectDetector:
         # Initialize tracking trajectories
         self.tracking_trajectories = {}
     
-    def detect(self, image, track=True):
+    def detect(self, image, track=True, depth_map=None):
         """
         Detect objects in an image
         
@@ -169,6 +172,11 @@ class ObjectDetector:
 
                         xmin, ymin, xmax, ymax = bbox_coord.cpu().numpy()
                         
+                        # -- Ajout : estimation de la pronfondeur ---
+                        distance = None
+                        if depth_map is not None and self.depth_estimator is not None :
+                            distance = self.depth_estimator.get_depth_in_region(depth_map, [xmin, ymin, xmax, ymax], method='median')
+
                         # Add to detections list
                         detections.append([
                             [xmin, ymin, xmax, ymax],  # bbox
@@ -185,6 +193,8 @@ class ObjectDetector:
                         
                         # Add label
                         label = f"ID: {int(id_) if id_ is not None else 'N/A'} {predictions.names[int(class_id)]} {float(score):.2f}"
+                        if distance is not None and distance > 0:
+                            label += f" | {distance:.2f}m"
                         text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
                         dim, baseline = text_size[0], text_size[1]
                         cv2.rectangle(annotated_image, 
@@ -240,6 +250,11 @@ class ObjectDetector:
 
                         xmin, ymin, xmax, ymax = bbox_coord.cpu().numpy()
                         
+                        # -- Ajout : estimation de la pronfondeur ---
+                        distance = None
+                        if depth_map is not None and self.depth_estimator is not None :
+                            distance = self.depth_estimator.get_depth_in_region(depth_map, [xmin, ymin, xmax, ymax], method='median')
+
                         # Add to detections list
                         detections.append([
                             [xmin, ymin, xmax, ymax],  # bbox
@@ -256,6 +271,8 @@ class ObjectDetector:
                         
                         # Add label
                         label = f"{predictions.names[int(class_id)]} {float(score):.2f}"
+                        if distance is not None and distance > 0:
+                            label += f" | {distance:.2f}m"
                         text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
                         dim, baseline = text_size[0], text_size[1]
                         cv2.rectangle(annotated_image, 
