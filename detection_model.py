@@ -48,10 +48,10 @@ class ObjectDetector:
             'extra': 'yolo11x'
         }
 
-        #calibration de la caméra
-        self.FOCAL_PIXELS = 500.0
-        self.REF_OBJECT_HEIGHT_M = 1.7
-        self.REF_CLASS_ID = 0
+        # #calibration de la caméra pinhole mode
+        # self.FOCAL_PIXELS = 500  #500 pour la webcam
+        # self.REF_OBJECT_HEIGHT_M = 1.7
+        # self.REF_CLASS_ID = 0
         
         model_name = '/home/yanndg/Documents/Programmation/Stage_Saxion/DroneFirefighting/best.pt' #model_map.get(model_size.lower(), model_map['small'])
         # Define fixed per-class confidence thresholds here
@@ -176,13 +176,14 @@ class ObjectDetector:
                         xmin, ymin, xmax, ymax = bbox_coord.cpu().numpy()
                         
                         distance = None
-                        if int(class_id) == self.REF_CLASS_ID and ymax > ymin:
-                            bbox_height_pix = ymax - ymin
-                            #distance = (Taille réélle * focale)/taille en pixel
-                            distance_pinhole = (self.REF_OBJECT_HEIGHT_M * self.FOCAL_PIXELS) / bbox_height_pix
-                            distance = distance_pinhole
+                        # Calcule de la distance Pinhole mode
+                        # if int(class_id) == self.REF_CLASS_ID and ymax > ymin:
+                        #     bbox_height_pix = ymax - ymin
+                        #     #distance = (Taille réélle * focale)/taille en pixel
+                        #     distance_pinhole = (self.REF_OBJECT_HEIGHT_M * self.FOCAL_PIXELS) / bbox_height_pix
+                        #     distance = distance_pinhole
 
-                        elif depth_map is not None and self.depth_estimator is not None :
+                        if depth_map is not None and self.depth_estimator is not None :
                             distance = self.depth_estimator.get_depth_in_region(depth_map, [xmin, ymin, xmax, ymax], method='p5')
 
                         # Add to detections list
@@ -190,7 +191,8 @@ class ObjectDetector:
                             [xmin, ymin, xmax, ymax],  # bbox
                             float(score),              # confidence score
                             int(class_id),             # class id
-                            int(id_) if id_ is not None else None  # object id
+                            int(id_) if id_ is not None else None, # object id
+                            distance  
                         ])
                         
                         # Draw bounding box
@@ -260,13 +262,14 @@ class ObjectDetector:
                         
                         # -- Ajout : estimation de la pronfondeur ---
                         distance = None
-                        if int(class_id) == self.REF_CLASS_ID and ymax > ymin:
-                            bbox_height_pix = ymax - ymin
-                            #distance = (Taille réélle * focale)/taille en pixel
-                            distance_pinhole = (self.REF_OBJECT_HEIGHT_M * self.FOCAL_PIXELS) / bbox_height_pix
-                            distance = distance_pinhole
+                        # Calcule distance Pinhole mode
+                        # if int(class_id) == self.REF_CLASS_ID and ymax > ymin:
+                        #     bbox_height_pix = ymax - ymin
+                        #     #distance = (Taille réélle * focale)/taille en pixel
+                        #     distance_pinhole = (self.REF_OBJECT_HEIGHT_M * self.FOCAL_PIXELS) / bbox_height_pix
+                        #     distance = distance_pinhole
 
-                        elif depth_map is not None and self.depth_estimator is not None :
+                        if depth_map is not None and self.depth_estimator is not None :
                             distance = self.depth_estimator.get_depth_in_region(depth_map, [xmin, ymin, xmax, ymax], method='p5')
 
                         # Add to detections list
@@ -274,7 +277,8 @@ class ObjectDetector:
                             [xmin, ymin, xmax, ymax],  # bbox
                             float(score),              # confidence score
                             int(class_id),             # class id
-                            None                       # object id (None for no tracking)
+                            None,                       # object id (None for no tracking)
+                            distance
                         ])
                         
                         # Draw bounding box

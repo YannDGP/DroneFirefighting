@@ -10,10 +10,13 @@ import datetime
 import signal
 import sys
 
+# --- Imports ROS 2 ---
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image 
+
 # --- Constantes de Tolérance ---
-# Tolérance pour la détection (le modèle plus rapide)
 TOLERANCE_DETECTION = 3 
-# Tolérance pour la profondeur (le modèle plus lent)
 TOLERANCE_DEPTH = 7 
 
 def resize_with_aspect_ratio(image, target_width, target_height):
@@ -21,12 +24,44 @@ def resize_with_aspect_ratio(image, target_width, target_height):
     scale = max(target_width / w, target_height / h)
     new_w, new_h = int(w * scale), int(h * scale)
     resized = cv2.resize(image, (new_w, new_h))
-    # Crop centré
     x_start = (new_w - target_width) // 2
     y_start = (new_h - target_height) // 2
     return resized[y_start:y_start + target_height, x_start:x_start + target_width]
 
+# --- Subscriber ROS2 pour récupérer les images ZED (CORRIGÉ) ---
+class FrameSubscriber(Node):
+    def __init__(self, frame_source, lock):
+        super().__init__('frame_subscriber')
+        self.frame_source = frame_source
+        self.lock = lock
+        self.subscription = self.create_subscription(
+            Image,
+            # TOPIC CORRIGÉ basé sur ros2 topic list
+            '/zed/zed_node/rgb/color/rect/image',
+            self.listener_callback,
+            10)
+        self.get_logger().info('ROS2 Frame Subscriber started, listening on /zed/zed_node/rgb/color/rect/image')
 
+    def listener_callback(self, msg):
+        # La ZED envoie probablement en BGRA (4 canaux), nous corrigeons le reshape
+        image_data = np.frombuffer(msg.data, dtype=np.uint8)
+        
+        # Reshape en 4 canaux (BGRA)
+        try:
+            # Assurez-vous d'utiliser la résolution correcte publiée par le zed_wrapper (640x360 par défaut)
+            frame_4ch = image_data.reshape((msg.height, msg.width, 4))
+            
+            # Conversion de BGRA (4 canaux) en BGR (3 canaux) pour OpenCV
+            frame = cv2.cvtColor(frame_4ch, cv2.COLOR_BGRA2BGR)
+        except ValueError as e:
+            self.get_logger().error(f"Erreur de Reshape: {e}. Vérifiez la taille du message : {image_data.size} vs {msg.height}x{msg.width}x3 ou 4.")
+            return
+
+        with self.lock:
+            self.frame_source["latest_frame"] = frame.copy()
+            self.frame_source["frame_id"] += 1
+
+# --- Workers inchangés ---
 def detection_worker(detector, frame_source, output_dict, lock, stop_flag):
     last_processed_id = -1
     while not stop_flag["stop"]:
@@ -47,24 +82,23 @@ def detection_worker(detector, frame_source, output_dict, lock, stop_flag):
             # Traitement (lourd, hors du lock)
             start_detect = time.time()
             small_frame = cv2.resize(frame, (640, 360))
-            detection_frame, _, _ = detector.detect(small_frame, track=False,depth_map = current_depth_map)  
+            detection_frame, detection_data, _ = detector.detect(small_frame, track=False,depth_map = current_depth_map) # Récupération des données pour TensorBoard
             end_detect = time.time()
 
-            detect_durarion = end_detect - start_detect
-            detect_fps = 1 / detect_durarion if detect_durarion >0 else 0
+            detect_duration = end_detect - start_detect
+            detect_fps = 1 / detect_duration if detect_duration >0 else 0
             # Publication du résultat (sous lock)
             with lock:
                 output_dict["detect"] = detection_frame
                 output_dict["detect_id"] = current_id
                 output_dict["detect_fps"] = detect_fps
+                output_dict["latest_detections"] = detection_data # Mise à jour des données de détection
             
             # Mise à jour de l'ID traitée UNIQUEMENT après publication réussie
             last_processed_id = current_id 
 
         time.sleep(0.001)
-        #pass
         
-
 def depth_worker(depth_estimator, frame_source, output_dict, lock, stop_flag):
     last_processed_id = -1
     while not stop_flag["stop"]:
@@ -97,36 +131,18 @@ def depth_worker(depth_estimator, frame_source, output_dict, lock, stop_flag):
             last_processed_id = current_id 
 
         time.sleep(0.001)
-        #pass
 
-def main(source=0):
-    cap = cv2.VideoCapture(source)
-    if not cap.isOpened():
-        print("Erreur : impossible d'ouvrir la source ({source}).")
-        return
-
-    
-    #Tentative de forcer une résolution plus faible pour réduire la charge I/O et CPU
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1080) 
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720) 
-
-    video_fps = cap.get(cv2.CAP_PROP_FPS)
-    if video_fps <= 0 or isinstance(source, int):
-        video_fps = 30
-    
-    target_wait_ms = int(1000 /video_fps)
-
-    # Initialisation des modèles
+# --- Main (Adaptée à ROS 2) ---
+def main():
+    # --- Initialisation des modèles et TensorBoard (inchangée) ---
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    depth_estimator = DepthEstimator(model_size='small', device=device, backend='depth-anything') # Utilisez 'small' si trop lent
+    depth_estimator = DepthEstimator(model_size='small', device=device, backend='depth-anything')
     detector = ObjectDetector(model_size="small", conf_thres=0.1, iou_thres=0.45, device=device, depth_estimator = depth_estimator )
    
-    #Tensorboard (Tensor/it)
-    log_dir = f"run/fire_detection_{datetime.datetime.now().strftime('%d/%m/%Y-%Hh%Mm%Ss')}"
+    log_dir = f"run/fire_detection_{datetime.datetime.now().strftime('%d-%m-%Y_%Hh%Mm%Ss')}"
     writer = SummaryWriter(log_dir=log_dir)
     print(f"TensorBoard Logs saved to : {log_dir}")    
     
-    # Initialisation des variables partagées et gestion des threads
     window_name = "Detection + Depth"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(window_name, 960, 540)
@@ -136,6 +152,7 @@ def main(source=0):
     lock = Lock()
     stop_flag = {"stop": False}
 
+    # --- Gestionnaire de signal (Fermeture Propre) ---
     def signal_handler(sig, frame):
         print("\n[INFO] Ctrl+C détecté, arrêt propre...")
         stop_flag["stop"] = True
@@ -147,26 +164,30 @@ def main(source=0):
     detect_thread.start()
     depth_thread.start()
 
+    # --- Initialisation ROS 2 ---
+    rclpy.init(args=None)
+    node = FrameSubscriber(frame_source, lock)
+    
+    # Simuler les FPS pour l'affichage uniquement (la vitesse de traitement est gérée par les threads)
+    target_wait_ms = int(1000 / 30) # 30 FPS cible pour l'affichage
+    
     try:
         while not stop_flag["stop"]:
             start_time = time.time()
-            ret, frame = cap.read()
             
-            
-            # Gestion de la fin de la vidéo ou de la fermeture de la fenêtre
-            if not ret or cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
-                break
-            if cv2.waitKey(1) & 0xFF in [27, ord('q')]:
-                break
+            # Écoute ROS 2 pour remplir frame_source (remplace cap.read())
+            rclpy.spin_once(node, timeout_sec=0.01)
 
-            # Stocker la frame lue
-            current_frame_id = -1
+            # Vérification de l'existence d'une frame et de l'arrêt de la fenêtre
+            if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                break
+                
             with lock:
-                frame_source["latest_frame"] = frame.copy()
-                frame_source["frame_id"] += 1
+                if "latest_frame" not in frame_source:
+                    continue # Attendre qu'une frame soit reçue
+                frame = frame_source["latest_frame"].copy()
                 current_frame_id = frame_source["frame_id"]
 
-            detection_date = None
             # --- Récupération des résultats avec Freshness Check ---
             with lock:
                 # 1. Fallback Frame
@@ -219,9 +240,9 @@ def main(source=0):
                 h, w, _ = small_depth.shape
                 display_frame[0:h, 0:w] = small_depth
 
-            #Enregistrement TensorBoard
+            # --- Enregistrement TensorBoard ---
             
-            #latency and performance
+            # latency and performance
             detect_latency = current_frame_id - detection_id
             depth_latency = current_frame_id - depth_id
 
@@ -229,7 +250,7 @@ def main(source=0):
             writer.add_scalar('Latency/Detection_Lag_Frames', detect_latency, current_frame_id)
             writer.add_scalar('Latency/Depth_Lag_Frames', depth_latency, current_frame_id)
             
-            #fps des workers
+            # fps des workers
             detect_fps = shared_data.get("detect_fps", None)
             depth_fps = shared_data.get("depth_fps", None)
 
@@ -239,13 +260,17 @@ def main(source=0):
                  writer.add_scalar('Performance/Depth_FPS', depth_fps, current_frame_id)
 
 
-            #Metrique distance minimal
+            # Metrique distance minimal
             min_distance = float('inf')
 
-            if detection_data and detection_data [1]:
-                for detection in detection_data [1]:
-                    if len(detection) > 4 and detection[4] and detection [4] is not None and detection [4] > 0:
-                        min_distance = min(min_distance, detection[4])
+            if detection_data: # Vérifier que detection_data n'est pas None
+                # Vous devez ajuster cette partie pour extraire la distance si elle est dans detection_data
+                # Exemple supposé basé sur une structure [xmin, ymin, xmax, ymax, distance]
+                if isinstance(detection_data, list):
+                    for detection in detection_data:
+                        # Assumons que detection[4] est la distance.
+                        if len(detection) > 4 and detection[4] is not None and detection[4] > 0:
+                             min_distance = min(min_distance, detection[4])
 
             if min_distance != float('inf'):
                 writer.add_scalar('Ranging/Min_Detected_Distance', min_distance, current_frame_id)
@@ -256,6 +281,13 @@ def main(source=0):
             writer.add_scalar('Performance/Display_FPS', loop_fps, current_frame_id)
 
             cv2.imshow(window_name, display_frame)
+            
+            # --- LIGNE AJOUTÉE : CAPTURE D'ÉCRAN TOUTES LES 60 IMAGES ---
+            if current_frame_id % 60 == 0 and current_frame_id > 0:
+                screenshot_filename = f"screenshot_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_frame_{current_frame_id}.png"
+                cv2.imwrite(screenshot_filename, display_frame)
+                print(f"[INFO] Capture d'écran enregistrée : {screenshot_filename}")
+            # -------------------------------------------------------------
 
             elapsed_time_ms = (time.time() - start_time) * 1000
             delay_ms = int(target_wait_ms - elapsed_time_ms)
@@ -267,15 +299,27 @@ def main(source=0):
             if key in [27, ord('q')]:
                 break
 
+    # --- Bloc de Fermeture Propre ---
     finally:
-        # Fermeture propre
+        print("[INFO] Démarrage de la procédure de fermeture propre.")
+        
+        # 1. Signal aux workers de s'arrêter
         stop_flag["stop"] = True
+        
+        # 2. Arrêt des threads de traitement
+        print("[INFO] Attente de la fin des threads de worker...")
         detect_thread.join()
         depth_thread.join()
-        cap.release()
+        
+        # 3. Fermeture ROS 2
+        print("[INFO] Fermeture du noeud ROS2 et de l'environnement rclpy.")
+        if rclpy.ok():
+            node.destroy_node()
+            rclpy.shutdown()
+            
+        # 4. Fermeture OpenCV
         cv2.destroyAllWindows()
         print("[INFO] Fermeture complète effectuée.")
 
 if __name__ == "__main__":
-    main (source='/home/yanndg/Documents/Programmation/Stage_Saxion/test_video/input.mp4')
-	#main(source=0)
+    main()
