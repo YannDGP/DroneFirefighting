@@ -22,7 +22,7 @@ A modular vision-based system for real-time fire, smoke, and human detection wit
 ## Requirements
 
 - Python 3.8+
-- PyTorch 2.0+
+- PyTorch and TochVision Unique Build 
 - OpenCV
 - NumPy
 - Other dependencies listed in `requirements.txt`
@@ -37,6 +37,21 @@ pip install -r requirements.txt
 (Optional) Calibrate cameras if using a new RGB–thermal setup:
 ```bash
 python load_camera_params.py
+```
+## Installation on Nvidia Jetson Orin Nano
+
+Install ROS2 on the Jetson Orin Nano (Humble recommended).
+Connect the RGB–thermal camera to the Jetson.
+
+Start the camera through ROS2:
+
+```bash
+ros2 launch <camera_package> <camera_launch_file>.py
+```
+In another terminal, source ROS2 and run the FDAR script:
+```bash
+source /opt/ros/<distro>/setup.bash
+python Ros_run.py
 ```
 
 ## Usage
