@@ -31,7 +31,7 @@ A modular vision-based system for real-time fire, smoke, and human detection wit
 
 ```bash
 git clone <>
-cd FDAR
+cd <folder_name>
 pip install -r requirements.txt
 ```
 (Optional) Calibrate cameras if using a new RGB–thermal setup:
@@ -46,7 +46,7 @@ Connect the RGB–thermal camera to the Jetson.
 Start the camera through ROS2:
 
 ```bash
-ros2 launch <camera_package> <camera_launch_file>.py
+ros2 run workswell_ros2_interface camera_node
 ```
 In another terminal, source ROS2 and run the FDAR script:
 ```bash
