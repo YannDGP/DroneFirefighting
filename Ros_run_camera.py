@@ -6,7 +6,6 @@ from threading import Thread, Lock
 from detection_model import ObjectDetector
 from depth_model import DepthEstimator
 from torch.utils.tensorboard import SummaryWriter
-from rclpy.qos import qos_profile_sensor_data
 import datetime
 import signal
 import sys
@@ -14,143 +13,163 @@ import sys
 # --- Imports ROS 2 ---
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image 
+from sensor_msgs.msg import Image, CameraInfo
+from rclpy.qos import qos_profile_sensor_data
 
-# --- Constantes de Tolérance ---
-TOLERANCE_DETECTION = 3 
+# --- Limits of frames ---
+TOLERANCE_DETECTION = 3
 TOLERANCE_DEPTH = 5
 
-def resize_with_aspect_ratio(image, target_width, target_height):
-    h, w = image.shape[:2]
-    scale = max(target_width / w, target_height / h)
-    new_w, new_h = int(w * scale), int(h * scale)
-    resized = cv2.resize(image, (new_w, new_h))
-    x_start = (new_w - target_width) // 2
-    y_start = (new_h - target_height) // 2
-    return resized[y_start:y_start + target_height, x_start:x_start + target_width]
-
-# --- Subscriber ROS2 pour récupérer les images ZED (CORRIGÉ) ---
-class FrameSubscriber(Node):
+# --- Unique Class for the Camera gestion (Info + Images) ---
+class CameraNode(Node):
     def __init__(self, frame_source, lock):
-        super().__init__('frame_subscriber')
+        super().__init__('camera_node')
         self.frame_source = frame_source
         self.lock = lock
-        self.subscription = self.create_subscription(
-            Image,
-            # TOPIC CORRIGÉ basé sur ros2 topic list
-            '/workswell/rgb',
-            self.listener_callback,
-            qos_profile=qos_profile_sensor_data)
-        #self.get_logger().info('ROS2 Frame Subscriber started, listening on /zed/zed_node/rgb/color/rect/image')
+        self.fx = None # stock focal here
 
-    def listener_callback(self, msg):
-        # La ZED envoie probablement en BGRA (4 canaux), nous corrigeons le reshape
+        # 1. Subscriber for the Images (RGB)
+        self.image_sub = self.create_subscription(
+            Image,
+            '/workswell/rgb',
+            self.image_callback,
+            qos_profile=qos_profile_sensor_data)
+
+        # 2. Subscriber for the CameraInfo (Focale)
+        self.info_sub = self.create_subscription(
+            CameraInfo,
+            '/x500/camera/camera_info',
+            self.info_callback,
+            10) # QoS by default
+
+    def info_callback(self, msg):
+        # We get the focal once
+        if self.fx is None:
+            self.fx = msg.k[0]
+            self.get_logger().info(f"Focal received : {self.fx}")
+
+    def image_callback(self, msg):
+        # Somme cameras send images in BGRA (4 canals), preventive reshape
         image_data = np.frombuffer(msg.data, dtype=np.uint8)
-        
+
         try:
-            frame = image_data.reshape((msg.height, msg.width, 3))
+            # Dynamic gestion of canals if it changes (3 or 4)
+            nb_channels = int(image_data.size / (msg.height * msg.width))
+            frame = image_data.reshape((msg.height, msg.width, nb_channels))
+
+            # If 4 canals (BGRA), convertion in BGR for OpenCV/Models
+            if nb_channels == 4:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
         except ValueError as e:
-            self.get_logger().error(f"Erreur de Reshape: {e}. Vérifiez la taille du message : {image_data.size} vs {msg.height}x{msg.width}x3 ou 4.")
+            self.get_logger().error(f"Reshape Error: {e}.")
             return
 
         with self.lock:
             self.frame_source["latest_frame"] = frame.copy()
             self.frame_source["frame_id"] += 1
 
-# --- Workers inchangés ---
+# --- Workers ---
 def detection_worker(detector, frame_source, output_dict, lock, stop_flag):
     last_processed_id = -1
     while not stop_flag["stop"]:
         frame = None
         current_id = -1
         current_depth_map = None
-        
-        # Acquisition : Copier UNIQUEMENT si la frame est plus récente que la dernière traitée
+
         with lock:
             if "latest_frame" in frame_source and frame_source["frame_id"] > last_processed_id:
                 frame = frame_source["latest_frame"].copy()
                 current_id = frame_source["frame_id"]
-
-            # Récupérer la carte de profondeur la plus fraîche (pas de vérification d'ID ici, on prend la dernière)
             current_depth_map = output_dict.get("raw_depth_map",None)
-        
+
         if frame is not None:
-            # Traitement (lourd, hors du lock)
             start_detect = time.time()
             small_frame = cv2.resize(frame, (640, 360))
-            detection_frame, detection_data, _ = detector.detect(small_frame, track=False,depth_map = current_depth_map) # Récupération des données pour TensorBoard
+            detection_frame, detection_data, _ = detector.detect(small_frame, track=False, depth_map=current_depth_map)
             end_detect = time.time()
+            detect_fps = 1 / (end_detect - start_detect) if (end_detect - start_detect) > 0 else 0
 
-            detect_duration = end_detect - start_detect
-            detect_fps = 1 / detect_duration if detect_duration >0 else 0
-            # Publication du résultat (sous lock)
             with lock:
                 output_dict["detect"] = detection_frame
                 output_dict["detect_id"] = current_id
                 output_dict["detect_fps"] = detect_fps
-                output_dict["latest_detections"] = detection_data # Mise à jour des données de détection
-            
-            # Mise à jour de l'ID traitée UNIQUEMENT après publication réussie
-            last_processed_id = current_id 
+                output_dict["latest_detections"] = detection_data
 
+            last_processed_id = current_id
         time.sleep(0.001)
-        
+
 def depth_worker(depth_estimator, frame_source, output_dict, lock, stop_flag):
     last_processed_id = -1
     while not stop_flag["stop"]:
         frame = None
         current_id = -1
-        
-        # Acquisition : Copier UNIQUEMENT si la frame est plus récente que la dernière traitée
+
         with lock:
             if "latest_frame" in frame_source and frame_source["frame_id"] > last_processed_id:
                 frame = frame_source["latest_frame"].copy()
                 current_id = frame_source["frame_id"]
-                
+
         if frame is not None:
-            # Traitement (lourd, hors du lock)
             start_depth = time.time()
             small_frame = cv2.resize(frame, (640, 360))
             depth_map = depth_estimator.estimate_depth(small_frame)
             depth_colored = depth_estimator.colorize_depth(depth_map)
             end_depth = time.time()
+            depth_fps = 1 / (end_depth - start_depth) if (end_depth - start_depth) > 0 else 0
 
-            depth_duration = end_depth - start_depth
-            depth_fps = 1 / depth_duration if depth_duration > 0 else 0
-            # Publication du résultat (sous lock)
             with lock:
                 output_dict["depth"] = depth_colored
                 output_dict["depth_id"] = current_id
                 output_dict["raw_depth_map"] =  depth_map
                 output_dict["depth_fps"] = depth_fps
-            # Mise à jour de l'ID traitée UNIQUEMENT après publication réussie
-            last_processed_id = current_id 
-
+            last_processed_id = current_id
         time.sleep(0.001)
 
-# --- Main (Adaptée à ROS 2) ---
+# --- Main ---
 def main():
-    # --- Initialisation des modèles et TensorBoard (inchangée) ---
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    depth_estimator = DepthEstimator(model_size='small', device=device, backend='depth-anything')
-    detector = ObjectDetector(model_size="small", conf_thres=0.1, iou_thres=0.45, device=device, depth_estimator = depth_estimator )
-   
-    log_dir = f"run/fire_detection_{datetime.datetime.now().strftime('%d-%m-%Y_%Hh%Mm%Ss')}"
-    writer = SummaryWriter(log_dir=log_dir)
-    print(f"TensorBoard Logs saved to : {log_dir}")    
-    
-    window_name = "Detection + Depth"
-    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(window_name, 960, 540)
-    
+    # 1. Initialisation ROS 2 
+    rclpy.init(args=None)
+
     shared_data = {}
     frame_source = {"frame_id" : 0}
     lock = Lock()
     stop_flag = {"stop": False}
 
-    # --- Gestionnaire de signal (Fermeture Propre) ---
+    # Unique Node creation 
+    camera_node = CameraNode(frame_source, lock)
+
+    # 2. Wait fot the Focal
+    print("[INFO] Wait for the CameraInfo (focal)...")
+    start_wait = time.time()
+    while camera_node.fx is None:
+        rclpy.spin_once(camera_node, timeout_sec=0.1)
+        if time.time() - start_wait > 5.0: # Timeout of 5 secondes
+            print("[WARN] No CameraInfo received after 5s. Security end")
+            camera_node.fx = 550
+            break
+
+    print(f"[INFO] Focale used : {camera_node.fx}")
+
+    # 3. Initialisation of models (Now that we have fx)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    # We transfer the camera_node.fx to the constructor
+    depth_estimator = DepthEstimator(model_size='small', device=device, backend='depth-anything', focal_length_px=camera_node.fx)
+    detector = ObjectDetector(model_size="small", conf_thres=0.1, iou_thres=0.45, device=device, depth_estimator=depth_estimator)
+
+    # --- TensorBoard for later analysations ---
+    log_dir = f"run/fire_detection_{datetime.datetime.now().strftime('%d-%m-%Y_%Hh%Mm%Ss')}"
+    writer = SummaryWriter(log_dir=log_dir)
+    print(f"TensorBoard Logs saved to : {log_dir}")
+
+    window_name = "Detection + Depth"
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window_name, 960, 540)
+
+    # Signal gestion
     def signal_handler(sig, frame):
-        print("\n[INFO] Ctrl+C détecté, arrêt propre...")
+        print("\n[INFO] Ctrl+C detected, clean stop...")
         stop_flag["stop"] = True
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -160,162 +179,98 @@ def main():
     detect_thread.start()
     depth_thread.start()
 
-    # --- Initialisation ROS 2 ---
-    rclpy.init(args=None)
-    node = FrameSubscriber(frame_source, lock)
-    
-    # Simuler les FPS pour l'affichage uniquement (la vitesse de traitement est gérée par les threads)
-    target_wait_ms = int(1000 / 30) # 30 FPS cible pour l'affichage
-    
+    target_wait_ms = int(1000 / 30)
+
     try:
         while not stop_flag["stop"]:
             start_time = time.time()
-            
-            # Écoute ROS 2 pour remplir frame_source (remplace cap.read())
-            rclpy.spin_once(node, timeout_sec=0.01)
 
-            # Vérification de l'existence d'une frame et de l'arrêt de la fenêtre
+            # 4. Primary loop 
+            rclpy.spin_once(camera_node, timeout_sec=0.001)
+
             if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                 break
-                
+
             with lock:
                 if "latest_frame" not in frame_source:
-                    continue # Attendre qu'une frame soit reçue
+                    continue
                 frame = frame_source["latest_frame"].copy()
                 current_frame_id = frame_source["frame_id"]
 
-            # --- Récupération des résultats avec Freshness Check ---
+            # --- Recovery and Display ---
             with lock:
-                # 1. Fallback Frame
                 fallback_frame = cv2.resize(frame.copy(), (640, 360))
-                
-                # 2. Traitement de la DÉTECTION
                 detection_id = shared_data.get("detect_id", -1)
                 detection_data = shared_data.get("latest_detections", None)
-                
-                # SÉCURITÉ (contre l'erreur cv2.resize)
-                detection_frame = fallback_frame 
-                
-                # Vérification de fraîcheur Détection
-                if detection_id >= current_frame_id - TOLERANCE_DETECTION: 
+                detection_frame = fallback_frame
+
+                if detection_id >= current_frame_id - TOLERANCE_DETECTION:
                     worker_result = shared_data.get("detect")
                     if worker_result is not None:
                         detection_frame = worker_result
-                
-                # 3. Traitement de la PROFONDEUR
+
                 depth_id = shared_data.get("depth_id", -1)
-                
-                # Vérification de fraîcheur Profondeur
-                if depth_id >= current_frame_id - TOLERANCE_DEPTH: 
+                if depth_id >= current_frame_id - TOLERANCE_DEPTH:
                     depth_colored = shared_data.get("depth", None)
                 else:
-                    depth_colored = None # Masquer si trop vieux
+                    depth_colored = None
 
-            # --- Affichage du statut dans la console ---
+            # --- Logs ---
             status_detect = f"D: ID {detection_id}"
             status_depth = f"P: ID {depth_id}"
-            
-            # Marquer le statut de rejet si le résultat du worker n'est pas utilisé
+
             if detection_id < current_frame_id - TOLERANCE_DETECTION:
-                status_detect = "D: REJETÉ (TROP VIEUX/FALLBACK)"
-            
+                status_detect = "D: REJECTED (TOO OLD)"
+
             if depth_colored is None:
-                # depth_colored est None si rejeté OU si le worker n'a rien produit (premières frames)
-                status_depth = "P: REJETÉ (TROP VIEUX/AUCUN)"
-            
-            print(f"FRAME LUE ID {current_frame_id} | {status_detect} | {status_depth}")
-            
-            # Affichage et fusion
+                status_depth = "P: REJECTED (TOO OLD)"
+
+            print(f"FRAME READ ID {current_frame_id} | {status_detect} | {status_depth}")
+
+            # ------------
+
+            # Fusion and fusion
             display_frame = cv2.resize(detection_frame, (frame.shape[1], frame.shape[0]))
-            
+
             if depth_colored is not None:
                 if depth_colored.ndim == 2:
                     depth_colored = cv2.cvtColor(depth_colored, cv2.COLOR_GRAY2BGR)
-
                 small_depth = cv2.resize(depth_colored, (frame.shape[1] // 4, frame.shape[0] // 4))
                 h, w, _ = small_depth.shape
                 display_frame[0:h, 0:w] = small_depth
 
-            # --- Enregistrement TensorBoard ---
-            
-            # latency and performance
+            # --- Logs Tensorboard ---
             detect_latency = current_frame_id - detection_id
             depth_latency = current_frame_id - depth_id
-
-
             writer.add_scalar('Latency/Detection_Lag_Frames', detect_latency, current_frame_id)
             writer.add_scalar('Latency/Depth_Lag_Frames', depth_latency, current_frame_id)
-            
-            # fps des workers
-            detect_fps = shared_data.get("detect_fps", None)
-            depth_fps = shared_data.get("depth_fps", None)
-
-            if detect_fps:
-                writer.add_scalar('Performance/Detection_FPS', detect_fps, current_frame_id)
-            if depth_fps:
-                 writer.add_scalar('Performance/Depth_FPS', depth_fps, current_frame_id)
-
-
-            # Metrique distance minimal
-            min_distance = float('inf')
-
-            if detection_data: # Vérifier que detection_data n'est pas None
-                # Vous devez ajuster cette partie pour extraire la distance si elle est dans detection_data
-                # Exemple supposé basé sur une structure [xmin, ymin, xmax, ymax, distance]
-                if isinstance(detection_data, list):
-                    for detection in detection_data:
-                        # Assumons que detection[4] est la distance.
-                        if len(detection) > 4 and detection[4] is not None and detection[4] > 0:
-                             min_distance = min(min_distance, detection[4])
-
-            if min_distance != float('inf'):
-                writer.add_scalar('Ranging/Min_Detected_Distance', min_distance, current_frame_id)
 
             loop_end = time.time()
-            loop_duration = loop_end - start_time
-            loop_fps = 1 / loop_duration if loop_duration >0 else 0
+            loop_fps = 1 / (loop_end - start_time) if (loop_end - start_time) > 0 else 0
             writer.add_scalar('Performance/Display_FPS', loop_fps, current_frame_id)
 
             cv2.imshow(window_name, display_frame)
-            
-            # --- LIGNE AJOUTÉE : CAPTURE D'ÉCRAN TOUTES LES 60 IMAGES ---
-            if current_frame_id % 60 == 0 and current_frame_id > 0:
-                screenshot_filename = f"screenshot_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_frame_{current_frame_id}.png"
-                cv2.imwrite(screenshot_filename, display_frame)
-                print(f"[INFO] Capture d'écran enregistrée : {screenshot_filename}")
-            # -------------------------------------------------------------
 
             elapsed_time_ms = (time.time() - start_time) * 1000
             delay_ms = int(target_wait_ms - elapsed_time_ms)
-            
             if delay_ms < 1: delay_ms = 1
-
             key = cv2.waitKey(delay_ms) & 0xFF
-        
             if key in [27, ord('q')]:
                 break
 
-    # --- Bloc de Fermeture Propre ---
     finally:
-        print("[INFO] Démarrage de la procédure de fermeture propre.")
-        
-        # 1. Signal aux workers de s'arrêter
+        print("[INFO] Closing the code.")
         stop_flag["stop"] = True
-        
-        # 2. Arrêt des threads de traitement
-        print("[INFO] Attente de la fin des threads de worker...")
         detect_thread.join()
         depth_thread.join()
-        
-        # 3. Fermeture ROS 2
-        print("[INFO] Fermeture du noeud ROS2 et de l'environnement rclpy.")
+
+        print("[INFO] Shutting down ROS2 nodes.")
         if rclpy.ok():
-            node.destroy_node()
-            rclpy.shutdown()
-            
-        # 4. Fermeture OpenCV
+            camera_node.destroy_node() # Destroy the Unique Node
+            rclpy.shutdown() # Shutdown everything at the end
+
         cv2.destroyAllWindows()
-        print("[INFO] Fermeture complète effectuée.")
+        print("[INFO] Complet clean shutdown.")
 
 if __name__ == "__main__":
     main()
