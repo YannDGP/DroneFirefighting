@@ -6,8 +6,7 @@ A modular vision-based system for real-time fire, smoke, and human detection wit
 ## Features
 
 - **Multi-Modal Perception**
-  - Supports RGB-only, thermal-only, and RGB–thermal fused (RGT) detection.
-  - Early-fusion pipeline with pixel-aligned RGB–thermal data.
+  - Supports RGB-only, thermal-only.
 - **Real-Time Detection**
   - Includes YOLO (v5–v12) and transformer-based detectors (RT-DETRv2, RF-DETR).
   - Multi-class detection of fire, smoke, and humans.
@@ -27,23 +26,23 @@ A modular vision-based system for real-time fire, smoke, and human detection wit
 - NumPy
 - Other dependencies listed in `requirements.txt`
 
-## Installation
+## Installation on the Jetson Orin Nano
 
 ```bash
 git clone <>
 cd <folder_name>
 pip install -r requirements.txt
+pip install torch-2.3.0a0+git97ff6cf-cp310-cp310-linux_aarch64.whl
+pip install torchvision-0.18.0a0+6043bc2-cp310-cp310-linux_aarch64.whl
 ```
-(Optional) Calibrate cameras if using a new RGB–thermal setup:
-```bash
-python load_camera_params.py
-```
+
 ## Installation on Nvidia Jetson Orin Nano
 
-Install ROS2 on the Jetson Orin Nano (Humble recommended).
+Install ROS2 on the Jetson Orin Nano (Humble).
 Connect the RGB–thermal camera to the Jetson.
 
-Start the camera through ROS2:
+
+Start the camera through ROS2 (With the Workswell Camera):
 
 ```bash
 ros2 run workswell_ros2_interface camera_node
@@ -54,21 +53,12 @@ source /opt/ros/<distro>/setup.bash
 python Ros_run.py
 ```
 
-## Usage
-
-Run the main script:
-
-```bash
-python run.py
-```
-
 ### Configuration Options
 
-You can modify the following parameters in `run.py`:
+You can modify the following parameters in `Ros _run.py`:
 
-- **Input/Output**:
-  - `source`: Path to input video file or webcam index (0 for default camera)
-  - `output_path`: Path to output video file
+- **Input**:
+  - `CameraNode` : In the subscriber you can change the topic (for image and focal)
 
 - **Model Settings**:
   - `yolo_model`: YOLOv5–YOLOv12, RT-DETRv2, or RF-DETR
@@ -80,9 +70,7 @@ You can modify the following parameters in `run.py`:
   - `classes`: Filter by class, e.g., [0, 1, 2] for specific classes, None for all classes
 
 - **Feature Toggles**:
-  - `enable_tracking`: Enable object tracking
-  - `enable_bev`: Enable Bird's Eye View visualization
-  - `enable_pseudo_3d`: Enable 3D visualization
+  - `TensorBoard`: For post video analysis
 
 ## Project Structure
 
