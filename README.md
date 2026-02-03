@@ -45,6 +45,9 @@ Connect the RGB–thermal camera to the Jetson.
 Start the camera through ROS2 (With the Workswell Camera):
 
 ```bash
+source /opt/ros/humble/setup.bash
+#Inside the ros project folder
+source install/setup.bash
 ros2 run workswell_ros2_interface camera_node
 ```
 In another terminal, source ROS2 and run the FDAR script:
@@ -76,7 +79,7 @@ You can modify the following parameters in `Ros _run.py`:
 
 ```
 FDAR/
-│── run.py                # Main entry point
+│── Ros_run.py                # Main entry point
 │── detection_model.py    # Multi-modal object detection logic
 │── depth_model.py        # Monocular depth estimation + scaling
 │── bbox3d_utils.py       # 3D bounding box and projection utilities
@@ -89,6 +92,4 @@ FDAR/
 
 1. **Object Detection**: Detects fire, smoke, and humans from RGB, thermal, or fused RGT images.
 2. **Depth Estimation**: Generates relative depth maps and scales them to metric depth.
-3. **3D Box Estimation**: Combines 2D boxes with depth information to create 3D boxes
-4. **Visualization**: Renders 3D boxes and bird's eye view for better spatial understanding
 
