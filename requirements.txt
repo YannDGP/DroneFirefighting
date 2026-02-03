@@ -4,7 +4,7 @@ filterpy>=1.4.5  # For Kalman filtering in tracking
 lap>=0.4.0  # For Hungarian algorithm in tracking
 matplotlib>=3.7.0
 ninja==1.13.0
-numpy==1.26.4
+numpy==1.26.4 # MUST BE 1.26.4
 onnx==1.15.0
 opencv-python==4.7.0.72
 pillow==12.0.0
@@ -15,8 +15,6 @@ scikit-image== 0.25.2
 scipy==1.15.3
 tensorboard==2.20.0
 timm==1.0.22 # Required for Depth Anything v2
-torch==2.3.0a0+git97ff6cf #Unique version Build for the project
-torchvision==0.18.0a0+6043bc2 #Unique version Build for the project
 tqdm==4.67.1
 transformers==4.57.3
 turtlesim==1.4.3

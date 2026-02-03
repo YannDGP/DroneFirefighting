@@ -52,7 +52,7 @@ ros2 run workswell_ros2_interface camera_node
 ```
 In another terminal, source ROS2 and run the FDAR script:
 ```bash
-source /opt/ros/<distro>/setup.bash
+source /opt/ros/humble/setup.bash
 python Ros_run.py
 ```
 
