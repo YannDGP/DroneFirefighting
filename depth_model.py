@@ -3,32 +3,40 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import cv2
+import rclpy
 from transformers import pipeline
 from PIL import Image
 from zoedepth.utils.misc import colorize as zoe_colorize
-
-# Add ZoeDepth to path if needed
+from rclpy.node import Node 
+from sensor_msgs.msg import CameraInfo
 import sys
+
+
 sys.path.insert(0, "ZoeDepth")
 from zoedepth.models.builder import build_model
 from zoedepth.utils.config import get_config
 
-# --- CONSTANTE DE CALIBRATION MÉTRIQUE ---
-# Calibré pour 3.0m
-#REAL_REF_DISTANCE = 1.5 # Mètres - Point d'ancrage métrique. (Empirique)
 
 class DepthEstimator:
-    def __init__(self, model_size='small', device=None, backend='depth-anything', focal_length_px = 500): #500 for WIRIS CAMERA
+    def __init__(self, model_size='small', device=None, backend='depth-anything', focal_length_px=None): 
         """
         Initialize the depth estimator
         """
         self.backend = backend.lower()
         self.focal_length_px = focal_length_px
 
+        #Put in the list the real distance value in meters and the read value for correction
+        if self.backend == 'depth-anything':
+            read_values = [1.6, 2.2, 2.6, 2.9]
+            real_values = [3.0, 3.5, 4.0, 4.5]
+            
+            self.coeffs = np.polyfit(read_values, real_values, 2)
+            print(f"Calibration values done : a={self.coeffs[0]:.4f}, b={self.coeffs[1]:.4f}, c={self.coeffs[2]:.4f}")
+            
+
         if device is None:
             if torch.cuda.is_available():
                 device = 'cuda'
-            
             elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
                 device = 'mps'
             else:
@@ -78,10 +86,12 @@ class DepthEstimator:
         elif self.backend == 'depth-anything':
             result = self.pipe(pil_image)
             depth = result['depth']
+            
             if isinstance(depth, Image.Image):
                 depth = np.array(depth, dtype=np.float32)
             elif isinstance(depth, torch.Tensor):
                 depth = depth.cpu().numpy().astype(np.float32)
+            
             
             depth_min = depth.min()
             depth_max = depth.max()
@@ -90,12 +100,12 @@ class DepthEstimator:
                 depth_relative = (depth - depth_min) / (depth_max - depth_min)
                 depth_relative = 1.0 - depth_relative
 
-                scale_factor = self.focal_length_px /100
-                depth_meter = depth_relative * scale_factor
+                raw_val = depth_relative * 5
+                depth_meter = np.polyval(self.coeffs, raw_val)
 
                 return depth_meter
             
-            return depth
+            #return depth
 
         
     def colorize_depth(self, depth_map, cmap=cv2.COLORMAP_INFERNO):
@@ -106,10 +116,7 @@ class DepthEstimator:
         # Normalize a copy for visualization
         depth_vis = depth_map.copy()
 
-        # Clamper la plage (par exemple, 0 à 10 mètres) si les valeurs sont métriques
-        if np.max(depth_vis) > 1.1: 
-            MAX_DISTANCE_VIS = 10.0 # Mètres (limite visuelle)
-            depth_vis = np.clip(depth_vis, 0, MAX_DISTANCE_VIS)
+        
         
         depth_min = np.min(depth_vis)
         depth_max = np.max(depth_vis)
