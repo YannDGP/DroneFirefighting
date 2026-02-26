@@ -26,6 +26,13 @@ A modular vision-based system for real-time fire, smoke, and human detection wit
 - NumPy
 - Other dependencies listed in `requirements.txt`
 
+To install the wheels of Pytorch and TorchVision
+```bash
+#Once you clone the repository, use 
+git lfs pull 
+#The wheels are too heavy for Git
+```
+
 ## Project in Jetson Orin Nano
 
 Everything was tested and made on the Jetson Orin Nano
