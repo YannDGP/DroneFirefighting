@@ -35,13 +35,15 @@ class CameraNode(Node):
             self.image_callback,
             qos_profile=qos_profile_sensor_data)
 
+''' Using the Polynomial corrector in Depth, the focal is not needed
+
         # 2. Subscriber for the CameraInfo (Focale)
         self.info_sub = self.create_subscription(
             CameraInfo,
             '/x500/camera/camera_info',
             self.info_callback,
             10) # QoS by default
-
+'''
     def info_callback(self, msg):
         # We get the focal once
         if self.fx is None:
@@ -139,6 +141,8 @@ def main():
     # Unique Node creation 
     camera_node = CameraNode(frame_source, lock)
 
+''' Not Usefull, focal not needed
+
     # 2. Wait fot the Focal
     print("[INFO] Wait for the CameraInfo (focal)...")
     start_wait = time.time()
@@ -150,6 +154,7 @@ def main():
             break
 
     print(f"[INFO] Focale used : {camera_node.fx}")
+'''
 
     # 3. Initialisation of models (Now that we have fx)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
