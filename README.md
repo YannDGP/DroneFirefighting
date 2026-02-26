@@ -26,8 +26,33 @@ A modular vision-based system for real-time fire, smoke, and human detection wit
 - NumPy
 - Other dependencies listed in `requirements.txt`
 
-## Installation on the Jetson Orin Nano
+## Project in Jetson Orin Nano
 
+Everything was tested and made on the Jetson Orin Nano
+The project is already inside (Last Test 24/02/2026)
+To launch the project :
+
+First Connect the camera model Workswell Wiris Enterprise
+```bash
+source /opt/ros/humble/setup.bash
+#Inside the ros_ws project folder
+source install/setup.bash
+ros2 run workswell_ros2_interface camera_node
+```
+In another terminal, to run the FDAR script:
+```bash
+cd Documents/Stage_Saxion
+#For the protection of the project I used a venv
+#Launch the venv
+source venv venv_saxion_project/bin/bash
+#Once the venv Launch
+cd DroneFirefighting
+#The Main folder project of my work on the Jetson
+source /opt/ros/humble/setup.bash
+python Ros_run.py
+```
+
+## Download of the project (Made for the Jetson)
 ```bash
 git clone <>
 cd <folder_name>
@@ -58,7 +83,7 @@ python Ros_run.py
 
 ### Configuration Options
 
-You can modify the following parameters in `Ros _run.py`:
+You can modify the following parameters in `Ros_run.py`:
 
 - **Input**:
   - `CameraNode` : In the subscriber you can change the topic (for image and focal)
