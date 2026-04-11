@@ -21,7 +21,7 @@ A modular vision-based system for real-time fire, smoke, and human detection wit
 ## Performance
 Tested on **NVIDIA Jetson Orin Nano** (JetPack 6, CUDA 12.2), live camera stream via ROS2 Humble.
 
-Original sequential pipeline -> ~2 FPS 
+Original sequential pipeline -> ~2 FPS
 Multi-threaded + TensorRT (FP16) -> ~20 FPS (10–25 FPS range) 
 
 - Fire detection confidence threshold: 0.3–0.4 for clear flames (detections below 0.1 discarded)
