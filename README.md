@@ -18,6 +18,17 @@ A modular vision-based system for real-time fire, smoke, and human detection wit
   - Human proximity checks with `safe-to-suppress` flags.
   - Optional pseudo-3D bounding box visualization.
 
+## Performance
+Tested on **NVIDIA Jetson Orin Nano** (JetPack 6, CUDA 12.2), live camera stream via ROS2 Humble.
+| Original sequential pipeline | ~2 FPS |
+| Multi-threaded + TensorRT (FP16) | ~20 FPS (10–25 FPS range) |
+
+- Fire detection confidence threshold: 0.3–0.4 for clear flames (detections below 0.1 discarded)
+- Depth estimation error: ±0.25m at 3m distance
+- Reliable ranging range after polynomial correction: 3m – 5m
+- ROS2 camera Workswell WIRIS Enterprise latency: ~500–700ms (reduced from >1s via resolution optimization)
+- No latency on ZED2 Stereolabs
+
 ## Requirements
 
 - Python 3.8+
